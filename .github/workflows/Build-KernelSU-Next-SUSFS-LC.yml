@@ -45,97 +45,58 @@ jobs:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 8192
-          temp-reserve-mb: 2048
+          root-reserve-mb: 9216
+          swap-reserve-mb: 4096
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
-          remove-codeql: 'true'
-          
+
       - name: Configure Git
         run: |
-         git config --global user.name "build"
-         git config --global user.email "3436378798@qq.com"
+          git config --global user.name "CI Builder"
+          git config --global user.email "builder@kernel.ci"
+          git config --global core.fileMode false
+          git config --global core.autocrlf input
 
       - name: Install dependencies
         run: |
-         sudo apt update && sudo apt upgrade -y
-         sudo apt install -y python3 git curl
+          sudo apt update && sudo DEBIAN_FRONTEND=noninteractive apt upgrade -y
+          sudo apt install -y \
+            python3 git curl rsync \
+            flex bison build-essential \
+            libssl-dev libelf-dev bc
 
-      - name: Install repo tool
+      - name: Setup repo tool
         run: |
-         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
-         chmod a+x ~/repo
-         sudo mv ~/repo /usr/local/bin/repo
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
+          chmod +x ~/repo
+          sudo mv ~/repo /usr/local/bin/
 
-      - name: Initialize repo and sync
+      - name: Initialize kernel source
         run: |
-         mkdir kernel_workspace && cd kernel_workspace
-         repo init -u https://github.com/MClengchuan/oneplus_kernel_manifest.git -b refs/heads/oneplus/${{ github.event.inputs.CPU }} -m ${{ github.event.inputs.FEIL }}.xml --depth=1
-         repo sync
-         rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
-         rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
-         sed -i 's/ -dirty//g' kernel_platform/common/scripts/setlocalversion
-         sed -i 's/ -dirty//g' kernel_platform/msm-kernel/scripts/setlocalversion
+          mkdir -p kernel_workspace
+          cd kernel_workspace
+          repo init -u https://github.com/MClengchuan/oneplus_kernel_manifest.git \
+            -b oneplus/${{ inputs.CPU }} \
+            -m ${{ inputs.FEIL }}.xml \
+            --depth=1 \
+            --no-repo-verify
+          repo sync -c -j$(nproc) --force-sync --no-clone-bundle
 
-      - name: Set up KernelSU Next
-        if: github.event.inputs.KSUNEXT_ENABLED == 'true'
+      - name: Clean source tree
         run: |
-         cd kernel_workspace/kernel_platform
-         # 使用官方集成命令
-         curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs
-         
-         # 获取KSU版本号
-         cd KernelSU-Next
-         KSU_VERSION=$(expr $(git rev-list --count HEAD) + 10200)
-         echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-         
-         # 应用官方补丁
-         curl -O https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/patches/ksu-next-susfs.patch
-         git apply ksu-next-susfs.patch
+          cd kernel_workspace
+          find . -name "abi_gki_protected_exports_*" -delete
+          sed -i 's/ -dirty//g' kernel_platform/*/scripts/setlocalversion
 
-      - name: Set up SUSFS
-        if: github.event.inputs.SUSFS_ENABLED == 'true'
+      - name: Integrate KernelSU Next
+        if: ${{ inputs.KSUNEXT_ENABLED }}
         run: |
-           cd kernel_workspace/kernel_platform
-           
-           # 从官方仓库获取SUSFS补丁
-           curl -O https://gitlab.com/simonpunk/susfs4ksu/-/raw/main/patches/susfs-gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch
-           
-           # 应用SUSFS核心补丁
-           patch -p1 --no-backup-if-mismatch < susfs-gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch
-           
-           # 文件系统操作
-           mkdir -p common/fs/susfs
-           cp -r ../susfs4ksu/fs/* common/fs/susfs/
-           
-           # 头文件更新
-           mkdir -p common/include/linux/susfs
-           cp -r ../susfs4ksu/include/* common/include/linux/susfs/
+          cd kernel_workspace/kernel_platform
+          curl -fsSL "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | \
+            bash -s -- next-susfs --force
 
-           # 提交修改
-           git add -A
-           git commit -m "Integrate SUSFS v1.5.5" --no-verify
-
-      - name: Build kernel
-        run: |
-         cd kernel_workspace
-         ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
-         
-      - name: Make AnyKernel3
-        run: |
-         git clone https://github.com/Kernel-SU/AnyKernel3 --depth=1
-         rm -rf ./AnyKernel3/.git
-         cp kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image ./AnyKernel3/
-
-      - name: Upload AnyKernel3
-        uses: actions/upload-artifact@v4
-        with:
-         name: AnyKernel3_KernelSU_Next_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
-         path: ./AnyKernel3/*
-         
-      - name: Upload Image
-        uses: actions/upload-artifact@v4
-        with:
-         name: Image_KernelSU_Next_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
-         path: kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image
+          # Dynamic versioning
+          cd KernelSU-Next
+          KSU_VER=$(git describe --tags --always | sed 's/^v//;s/-/./g')
+          echo
