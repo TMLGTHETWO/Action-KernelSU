@@ -78,6 +78,9 @@ jobs:
          rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
          sed -i 's/ -dirty//g' kernel_platform/common/scripts/setlocalversion
          sed -i 's/ -dirty//g' kernel_platform/msm-kernel/scripts/setlocalversion
+         sed -i 's/EXTRAVERSION =/EXTRAVERSION =-114514/I' kernel_platform/common/Makefile
+         sed -i 's/EXTRAVERSION =/EXTRAVERSION =-114514/I' kernel_platform/msm-kernel/Makefile
+
       - name: Set up KernelSU Next
         if: github.event.inputs.KSUNEXT_ENABLED == 'true'
         run: |
