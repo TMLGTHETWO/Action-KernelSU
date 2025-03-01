@@ -117,7 +117,7 @@ jobs:
            cd ..
            cd ./msm-kernel && git add -A && git commit -a -m "BUILD Kernel"
            cd ..
-             
+           echo "补丁文件路径： $(realpath ../kernel_patches/KernelSU-*.patch)"
            # cp ../kernel_patches/apk_sign.c_fix.patch ./
            # patch -p1 -F 3 < apk_sign.c_fix.patch
              
@@ -126,7 +126,7 @@ jobs:
            
            # cp ../kernel_patches/selinux.c_fix.patch ./
            # patch -p1 -F 3 < selinux.c_fix.patch
-           echo "补丁文件路径： $(realpath ../kernel_patches/KernelSU-*.patch)"
+           
       - name: Build kernel
         run: |
          cd kernel_workspace
